@@ -8,7 +8,6 @@ sys.path.append(os.path.join(BASE_DIR, 'pointnet2',  'tf_ops/grouping'))
 sys.path.append(os.path.join(BASE_DIR, 'pointnet2',  'utils'))
 
 from PIL import Image
-import argparse
 import numpy as np
 import copy
 import cv2
