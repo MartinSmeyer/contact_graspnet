@@ -7,6 +7,7 @@ import json
 import argparse
 import signal
 import trimesh.transformations as tra
+from urdfpy import URDF
 
 from acronym_tools import Scene, load_mesh, create_gripper_marker
 
@@ -83,7 +84,14 @@ class TableScene(Scene):
         super().__init__()
         self.root_folder = root_folder
         self.splits= splits
-        self.gripper_mesh = trimesh.load(os.path.join(BASE_DIR, gripper_path))
+
+        if 'URDF' in gripper_path:
+            self.gripper_mesh = URDF.load(os.path.join(BASE_DIR, gripper_path))
+            self.opening2joint = np.load(os.path.join(BASE_DIR, gripper_path.replace('.URDF', '_opening2joint.npy')))
+            self._urdf = True
+        else:
+            self.gripper_mesh = trimesh.load(os.path.join(BASE_DIR, gripper_path))
+            self._urdf = False
 
         self._table_dims = [1.0, 1.2, 0.6]
         self._table_support = [0.6, 0.6, 0.6]
@@ -93,6 +101,8 @@ class TableScene(Scene):
 
         self.data_splits = load_splits(root_folder)
         self.category_list = list(self.data_splits.keys())
+
+        print('loading contacts...')
         self.contact_infos = load_contacts(root_folder, self.data_splits, splits=self.splits)
         
         self._lower_table = lower_table
@@ -208,7 +218,7 @@ class TableScene(Scene):
 
         return not colliding, placement_T if not colliding else None
 
-    def is_colliding(self, mesh, transform, eps=1e-6):
+    def is_colliding(self, mesh, transform, urdf=False, gripper_opening=0.08, eps=1e-6):
         """
         Whether given mesh collides with scene
 
@@ -217,12 +227,26 @@ class TableScene(Scene):
             transform {np.ndarray} -- mesh transform
 
         Keyword Arguments:
+            urdf {boolean} -- whether to use gripper mesh urdf  (default: False)
+            gripper_opening {float} -- opening of the gripper in m  (default: 0.08)
             eps {float} -- minimum distance detected as collision (default: {1e-6})
 
         Returns:
             [bool] -- colliding or not
         """
-        dist = self.collision_manager.min_distance_single(mesh, transform=transform)
+
+        if urdf:
+            dist = 100
+            min_index = np.argmin(np.abs(self.opening2joint[0,:] - gripper_opening))
+            finger_joint = self.opening2joint[1, min_index] 
+            
+            fk = self.gripper_mesh.collision_trimesh_fk(cfg={'finger_joint' : finger_joint})
+            for tm in fk:
+                part_pose = fk[tm]
+                dist = np.min([self.collision_manager.min_distance_single(tm, transform=np.matmul(transform, part_pose)), dist])
+        else:
+            dist = self.collision_manager.min_distance_single(mesh, transform=transform)
+
         return dist < eps
     
     def load_suc_obj_contact_grasps(self, grasp_path):
@@ -318,7 +342,8 @@ class TableScene(Scene):
         filtered_grasps = []
         filtered_contacts = []
         for i,g in enumerate(transformed_grasps):
-            if not self.is_colliding(self.gripper_mesh, g):
+            gripper_opening = np.linalg.norm(transformed_contacts[2*i] - transformed_contacts[2*i+1])
+            if not self.is_colliding(self.gripper_mesh, g, urdf=self._urdf, gripper_opening=gripper_opening):
                 filtered_grasps.append(g)
                 filtered_contacts.append(transformed_contacts[2*i:2*(i+1)])
         return np.array(filtered_grasps).reshape(-1,4,4), np.array(filtered_contacts).reshape(-1,2,3)
@@ -438,6 +463,28 @@ class TableScene(Scene):
         return scene_filtered_grasps, scene_filtered_contacts, obj_paths, obj_transforms, obj_scales, obj_grasp_idcs
         
     def visualize(self, scene_grasps, scene_contacts=None):
+        """
+        Visualizes table top scene with grasps
+
+        Arguments:
+            scene_grasps {np.ndarray} -- Nx4x4 grasp transforms
+            scene_contacts {np.ndarray} -- Nx2x3 grasp contacts
+        """
+        print('Visualizing scene and grasps.. takes time')
+        
+        gripper_marker = create_gripper_marker(color=[0, 255, 0])
+        gripper_markers = [gripper_marker.copy().apply_transform(t) for t in scene_grasps]
+        
+        colors = np.ones((scene_contacts.shape[0]*2,4))*255
+        colors[:,0:2] = 0
+        scene_contact_scene = trimesh.Scene(trimesh.points.PointCloud(scene_contacts.reshape(-1,3), colors=colors))
+        
+        # show scene together with successful and collision-free grasps of all objects
+        trimesh.scene.scene.append_scenes(
+            [self.colorize().as_trimesh_scene(), trimesh.Scene(gripper_markers), scene_contact_scene]
+        ).show()
+
+    def visualize_urdf(self, scene_grasps):
         """
         Visualizes table top scene with grasps
 
