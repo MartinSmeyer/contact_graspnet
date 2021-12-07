@@ -1,4 +1,4 @@
-# Contact-GraspNet  
+# Contact-GraspNet
 
 ### Contact-GraspNet: Efficient 6-DoF Grasp Generation in Cluttered Scenes   
 Martin Sundermeyer, Arsalan Mousavian, Rudolph Triebel, Dieter Fox  
