@@ -236,6 +236,7 @@ class TableScene(Scene):
         """
 
         if urdf:
+
             dist = 100
             min_index = np.argmin(np.abs(self.opening2joint[0,:] - gripper_opening))
             finger_joint = self.opening2joint[1, min_index] 
@@ -341,8 +342,14 @@ class TableScene(Scene):
         """
         filtered_grasps = []
         filtered_contacts = []
+
+        z_out = np.eye(4)
+        z_out[2,3] = -0.1
         for i,g in enumerate(transformed_grasps):
-            gripper_opening = np.linalg.norm(transformed_contacts[2*i] - transformed_contacts[2*i+1])
+            gripper_opening = np.linalg.norm(transformed_contacts[2*i] - transformed_contacts[2*i+1]) + 0.01
+            if self._urdf:
+                g = np.linalg.inv(np.matmul(z_out, np.linalg.inv(g)))
+                
             if not self.is_colliding(self.gripper_mesh, g, urdf=self._urdf, gripper_opening=gripper_opening):
                 filtered_grasps.append(g)
                 filtered_contacts.append(transformed_contacts[2*i:2*(i+1)])
@@ -484,7 +491,7 @@ class TableScene(Scene):
             [self.colorize().as_trimesh_scene(), trimesh.Scene(gripper_markers), scene_contact_scene]
         ).show()
 
-    def visualize_urdf(self, scene_grasps):
+    def visualize_urdf(self, scene_grasps, scene_contacts):
         """
         Visualizes table top scene with grasps
 
@@ -494,16 +501,25 @@ class TableScene(Scene):
         """
         print('Visualizing scene and grasps.. takes time')
         
-        gripper_marker = create_gripper_marker(color=[0, 255, 0])
-        gripper_markers = [gripper_marker.copy().apply_transform(t) for t in scene_grasps]
-        
-        colors = np.ones((scene_contacts.shape[0]*2,4))*255
-        colors[:,0:2] = 0
-        scene_contact_scene = trimesh.Scene(trimesh.points.PointCloud(scene_contacts.reshape(-1,3), colors=colors))
-        
+
+        gripper_meshes = []
+        for g,c in zip(scene_grasps[:10], scene_contacts[:10]):
+            gripper_opening = np.linalg.norm(c[0,:] - c[1,:])
+            min_index = np.argmin(np.abs(self.opening2joint[0,:] - gripper_opening))
+            finger_joint = self.opening2joint[1, min_index] 
+            print(finger_joint, gripper_opening)
+            fk = self.gripper_mesh.collision_trimesh_fk(cfg={'finger_joint' : finger_joint})
+            gripper_meshes += [tm.copy().apply_transform(np.matmul(g, fk[tm])) for tm in fk]
+
+        if scene_contacts.shape[0] > 0:
+            colors = np.ones((scene_contacts.shape[0]*2,4))*255
+            colors[:,0:2] = 0
+            scene_contact_scene = trimesh.Scene(trimesh.points.PointCloud(scene_contacts.reshape(-1,3), colors=colors))
+        else:
+            scene_contact_scene = []
         # show scene together with successful and collision-free grasps of all objects
         trimesh.scene.scene.append_scenes(
-            [self.colorize().as_trimesh_scene(), trimesh.Scene(gripper_markers), scene_contact_scene]
+            [self.colorize().as_trimesh_scene(), trimesh.Scene(gripper_meshes), scene_contact_scene]
         ).show()
         
 if __name__ == "__main__":
@@ -554,5 +570,5 @@ if __name__ == "__main__":
             scene_grasps,scene_contacts, _,_ = table_scene.load_existing_scene(load_existing)
             
         if visualize:
-            table_scene.visualize(scene_grasps, scene_contacts)
+            table_scene.visualize_urdf(scene_grasps, scene_contacts)
             table_scene._scene_count +=1
